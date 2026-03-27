@@ -55,6 +55,8 @@ def fetch_stock_snapshot(ticker: str) -> dict:
 
     return {
         "ticker": ticker,
+        "name": info.get("longName") or info.get("shortName") or ticker,
+        "sector": info.get("sector") or "Unknown",
         "price": price,
         "change_pct": change_pct,
         "pe": _safe_float(info.get("trailingPE")),

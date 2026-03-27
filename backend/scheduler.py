@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 import zoneinfo
 import db
@@ -39,10 +40,9 @@ def run_fetch_cycle():
             try:
                 data = fetch_stock_snapshot(ticker)
                 indicators = compute_technicals(data["closes"])
-
+                db.upsert_stock(conn, ticker=ticker, name=data["name"], sector=data["sector"])
                 for bar in data["bars"]:
                     db.append_price_history(conn, ticker=ticker, **bar)
-
                 db.upsert_snapshot(
                     conn,
                     ticker=ticker,
@@ -59,6 +59,7 @@ def run_fetch_cycle():
                 )
             except Exception as e:
                 logger.error("Failed to fetch %s: %s", ticker, e)
+            time.sleep(2)
 
         # Fetch IHSG
         try:
@@ -95,6 +96,7 @@ def _cold_start_fetch():
             try:
                 data = fetch_stock_snapshot(ticker)
                 indicators = compute_technicals(data["closes"])
+                db.upsert_stock(conn, ticker=ticker, name=data["name"], sector=data["sector"])
                 for bar in data["bars"]:
                     db.append_price_history(conn, ticker=ticker, **bar)
                 db.upsert_snapshot(
@@ -106,6 +108,7 @@ def _cold_start_fetch():
                 )
             except Exception as e:
                 logger.error("Cold start fetch failed for %s: %s", ticker, e)
+            time.sleep(2)
         # Also fetch IHSG so the Dashboard has data from first boot
         try:
             ihsg = fetch_ihsg()

@@ -1,4 +1,5 @@
 import logging
+import time
 import httpx
 from bs4 import BeautifulSoup
 import yfinance as yf
@@ -103,14 +104,8 @@ def seed_stocks_table(conn, use_scrape: bool = True) -> None:
         all_tickers.update(tickers)
 
     for ticker in all_tickers:
-        name, sector = ticker, "Unknown"
-        try:
-            info = yf.Ticker(f"{ticker}.JK").info
-            name = info.get("longName") or info.get("shortName") or ticker
-            sector = info.get("sector") or "Unknown"
-        except Exception:
-            pass
-        db.upsert_stock(conn, ticker=ticker, name=name, sector=sector)
+        # Insert with placeholder name/sector — updated on first successful snapshot fetch
+        db.upsert_stock(conn, ticker=ticker, name=ticker, sector="Unknown")
         indices = [idx for idx, tlist in members.items() if ticker in tlist]
         db.set_stock_indices(conn, ticker, indices)
 
