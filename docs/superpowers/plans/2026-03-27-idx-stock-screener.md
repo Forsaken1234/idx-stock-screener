@@ -97,7 +97,7 @@ fastapi==0.111.0
 uvicorn[standard]==0.29.0
 apscheduler==3.10.4
 yfinance==0.2.40
-pandas-ta==0.3.14b0
+pandas-ta==0.4.71b0
 httpx==0.27.0
 beautifulsoup4==4.12.3
 pytest==8.2.0
@@ -2233,6 +2233,8 @@ git commit -m "feat: Layout, Sidebar, StaleWarning, MetricCard, Chart, StockTabl
 - Modify: `frontend/src/main.tsx`
 
 > **Note:** `index.html` references the entry point as `<script type="module" src="/src/main.tsx"></script>`. The `react-ts` Vite template generates this correctly, but if starting from the plain `react` template you would need to update `index.html` to reference `main.tsx` instead of `main.jsx`.
+
+> **React Router version:** The installed version is react-router-dom v7. The declarative `<BrowserRouter>`, `<Routes>`, `<Route>`, `<Link>`, `<NavLink>`, `useParams` API from v6 is fully supported in v7 with no changes — use it as written in this plan.
 
 - [ ] **Step 1: Create Dashboard.tsx**
 
