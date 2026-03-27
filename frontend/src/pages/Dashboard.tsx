@@ -29,7 +29,7 @@ export default function Dashboard() {
           sub={market?.ihsg_change_pct != null
             ? `${market.ihsg_change_pct > 0 ? '+' : ''}${market.ihsg_change_pct.toFixed(2)}%`
             : undefined}
-          color={market?.ihsg_change_pct > 0 ? 'text-emerald-400' : 'text-red-400'}
+          color={market?.ihsg_change_pct != null && market.ihsg_change_pct > 0 ? 'text-emerald-400' : 'text-red-400'}
         />
         <MetricCard label="Gainers" value={gainers} color="text-emerald-400" />
         <MetricCard label="Losers" value={losers} color="text-red-400" />

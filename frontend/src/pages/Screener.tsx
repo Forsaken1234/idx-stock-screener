@@ -8,16 +8,13 @@ export default function Screener() {
   const { data: stocks = [], isLoading } = useStocks(filters)
   const lastFetchedAt = stocks[0]?.fetched_at ?? null
 
-  const set = (key: keyof StockFilters, val: string) =>
-    setFilters(f => ({ ...f, [key]: val || undefined }))
-
   return (
     <Layout lastFetchedAt={lastFetchedAt}>
       <h2 className="text-xl font-semibold mb-6">Screener</h2>
 
       <div className="flex flex-wrap gap-3 mb-6">
         <select
-          onChange={e => set('index', e.target.value)}
+          onChange={e => setFilters(f => ({ ...f, index: e.target.value || undefined }))}
           className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm"
         >
           <option value="">All Indices</option>
@@ -28,19 +25,19 @@ export default function Screener() {
         <input
           placeholder="PE max"
           type="number"
-          onChange={e => set('pe_max', e.target.value)}
+          onChange={e => setFilters(f => ({ ...f, pe_max: e.target.value ? Number(e.target.value) : undefined }))}
           className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm w-24"
         />
         <input
           placeholder="RSI min"
           type="number"
-          onChange={e => set('rsi_min', e.target.value)}
+          onChange={e => setFilters(f => ({ ...f, rsi_min: e.target.value ? Number(e.target.value) : undefined }))}
           className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm w-24"
         />
         <input
           placeholder="RSI max"
           type="number"
-          onChange={e => set('rsi_max', e.target.value)}
+          onChange={e => setFilters(f => ({ ...f, rsi_max: e.target.value ? Number(e.target.value) : undefined }))}
           className="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm w-24"
         />
       </div>

@@ -5,7 +5,7 @@ import Layout from '../components/Layout'
 
 export default function Watchlist() {
   const { data: tickers = [] } = useWatchlist()
-  const { data: allStocks = [] } = useStocks()
+  const { data: allStocks = [], isLoading: stocksLoading } = useStocks()
   const remove = useRemoveFromWatchlist()
 
   const watchlistStocks = allStocks.filter(s => tickers.includes(s.ticker))
@@ -19,6 +19,8 @@ export default function Watchlist() {
         <p className="text-slate-400">
           Your watchlist is empty. Add stocks from the <Link to="/screener" className="text-indigo-400 underline">Screener</Link> or stock detail pages.
         </p>
+      ) : stocksLoading ? (
+        <p className="text-slate-400">Loading…</p>
       ) : (
         <div className="bg-slate-900 rounded-lg border border-slate-800 divide-y divide-slate-800">
           {watchlistStocks.map(stock => (
