@@ -72,7 +72,7 @@ FastAPI is configured with `CORSMiddleware` allowing `http://localhost:5173`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/stocks` | List all stocks with latest snapshot (supports filter params: `index`, `sector`, `rsi_min`, `rsi_max`, `pe_min`, `pe_max`) |
+| GET | `/stocks` | List all **active** stocks with latest snapshot (supports filter params: `index`, `sector`, `rsi_min`, `rsi_max`, `pe_min`, `pe_max`). Inactive tickers (`active=0`) are excluded by default. |
 | GET | `/stocks/{ticker}` | Single stock detail + price history array |
 | GET | `/watchlist` | Get saved watchlist tickers |
 | POST | `/watchlist/{ticker}` | Add ticker to watchlist |
@@ -114,6 +114,9 @@ FastAPI is configured with `CORSMiddleware` allowing `http://localhost:5173`.
   "history": [{"datetime": "...", "close": 7284}]
 }
 ```
+`history` returns today's intraday bars (current trading day). If market is closed, returns the most recent trading day's bars. This feeds the IHSG line chart on the Dashboard.
+
+`ihsg_history` rows older than 30 calendar days are pruned by the weekly scheduler job.
 
 ### Scheduler
 
@@ -170,6 +173,8 @@ RSI(14), MA(20), MA(50), MACD (line + signal + histogram), Bollinger Bands (uppe
 - `fetched_at` TEXT (ISO datetime)
 - `price`, `change_pct`, `pe`, `pbv`, `roe`, `eps`, `market_cap`, `div_yield`
 - `rsi`, `ma20`, `ma50`, `macd_line`, `macd_signal`, `macd_hist`, `bb_upper`, `bb_mid`, `bb_lower`
+- UNIQUE(`ticker`, `fetched_at`)
+- `GET /stocks` and `GET /stocks/{ticker}` always return the latest snapshot per ticker via `ORDER BY fetched_at DESC LIMIT 1`
 
 **price_history**
 - `id` INTEGER PRIMARY KEY
