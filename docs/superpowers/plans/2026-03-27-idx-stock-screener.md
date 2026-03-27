@@ -1296,9 +1296,8 @@ def setup_scheduler(app):
         conn = db.get_connection()
         seed_stocks_table(conn, use_scrape=True)
         conn.close()
-        # Trigger an immediate fetch regardless of market hours
-        logger.info("Cold start: triggering immediate fetch")
-        run_fetch_cycle.__wrapped__ = True  # bypass market check for cold start
+        # Trigger an immediate fetch of all tickers regardless of market hours
+        logger.info("Cold start: triggering immediate fetch for all tickers")
         _cold_start_fetch()
     elif is_market_open():
         logger.info("Market is open on startup — triggering immediate fetch")
@@ -1317,12 +1316,12 @@ def setup_scheduler(app):
 
 
 def _cold_start_fetch():
-    """Run fetch cycle ignoring market hours (for cold start with empty DB)."""
+    """Run fetch cycle ignoring market hours — fetches ALL tickers to fully seed the DB."""
     conn = db.get_connection()
     try:
         tickers = [s["ticker"] for s in db.get_all_active_stocks(conn)]
         logger.info("Cold start fetch for %d tickers", len(tickers))
-        for ticker in tickers[:5]:  # fetch a few to seed data quickly
+        for ticker in tickers:
             try:
                 data = fetch_stock_snapshot(ticker)
                 indicators = compute_technicals(data["closes"])
@@ -1575,9 +1574,27 @@ router = APIRouter()
 def get_market():
     conn = db.get_connection()
     try:
-        history = db.get_ihsg_history(conn)
+        # Get today's bars only (WIB date)
+        from datetime import datetime
+        import zoneinfo
+        today_wib = datetime.now(zoneinfo.ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT * FROM ihsg_history WHERE datetime LIKE ? ORDER BY datetime ASC",
+            (f"{today_wib}%",),
+        ).fetchall()
+        history = [dict(r) for r in rows]
+
+        # If no data today, fall back to most recent trading day
+        if not history:
+            rows = conn.execute(
+                "SELECT * FROM ihsg_history ORDER BY datetime DESC LIMIT 100"
+            ).fetchall()
+            if rows:
+                last_date = dict(rows[0])["datetime"][:10]
+                history = [dict(r) for r in rows if dict(r)["datetime"].startswith(last_date)]
+                history.reverse()
+
         ihsg_price = history[-1]["close"] if history else None
-        # Compute change_pct from first vs last bar of the day
         ihsg_change_pct = None
         if len(history) >= 2:
             first_close = history[0]["close"]
@@ -1828,6 +1845,7 @@ import { isMarketOpen, isDataStale, formatWIBTime } from '../utils/time'
 
 describe('isMarketOpen', () => {
   it('returns false on weekend', () => {
+    vi.useFakeTimers()
     // Saturday UTC = Saturday WIB
     vi.setSystemTime(new Date('2026-03-28T10:00:00Z')) // Saturday
     expect(isMarketOpen()).toBe(false)
@@ -2366,7 +2384,7 @@ export default function StockDetail() {
   const inWatchlist = watchlist.includes(ticker)
 
   if (isLoading) return <Layout><p className="text-slate-400">Loading…</p></Layout>
-  if (!stock || stock.detail) return <Layout><p className="text-red-400">Stock not found.</p></Layout>
+  if (!stock || 'detail' in stock) return <Layout><p className="text-red-400">Stock not found.</p></Layout>
 
   return (
     <Layout lastFetchedAt={stock.fetched_at}>
