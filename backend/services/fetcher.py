@@ -1,9 +1,25 @@
 import logging
 import math
-from datetime import datetime
-import yfinance as yf
+import time
+from datetime import datetime, timedelta
+import zoneinfo
+import httpx
 
 logger = logging.getLogger(__name__)
+
+WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
+BASE = "https://www.idx.co.id"
+
+_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.idx.co.id/",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
 
 def _safe_float(val) -> float | None:
@@ -14,136 +30,188 @@ def _safe_float(val) -> float | None:
         return None
 
 
-def fetch_stock_snapshot(ticker: str) -> dict:
+def _session() -> httpx.Client:
+    """Return an httpx Client with IDX session cookies."""
+    client = httpx.Client(headers=_HEADERS, follow_redirects=True, timeout=15)
+    client.get(f"{BASE}/id")
+    return client
+
+
+def fetch_all_stock_snapshots() -> dict[str, dict]:
     """
-    Fetch latest price, fundamentals, and intraday + daily price history for a ticker.
-
-    Price and history use the v8/finance/chart endpoint (fast_info + history()) which
-    is less rate-limited than quoteSummary. Fundamentals (PE, PBV, etc.) use .info
-    which hits quoteSummary — falls back to None if rate-limited.
-
-    Returns a dict including a 'closes' list (daily closes for technicals) and
-    'bars' list (intraday OHLCV for price_history table).
-    Raises on network error — caller handles retry/skip logic.
+    Fetch latest price + daily OHLCV for ALL IDX-listed stocks in ONE API call.
+    Tries today's date then walks back up to 5 weekdays to find populated data.
+    Returns dict[ticker → {price, change_pct, open, high, low, close, volume, name, market_cap}]
     """
-    yf_ticker = yf.Ticker(f"{ticker}.JK")
+    now_wib = datetime.now(WIB)
+    data: dict = {"data": [], "recordsTotal": 0}
 
-    # --- Price via fast_info (v8/finance/chart — not rate-limited like quoteSummary) ---
-    fi = yf_ticker.fast_info
-    price = _safe_float(fi.get("lastPrice") if hasattr(fi, "get") else getattr(fi, "last_price", None))
-    prev_close = _safe_float(fi.get("previousClose") if hasattr(fi, "get") else getattr(fi, "previous_close", None))
-    if price is None:
-        # fast_info attribute access varies by yfinance version
-        try:
-            price = _safe_float(fi["lastPrice"])
-        except Exception:
-            pass
-    if prev_close is None:
-        try:
-            prev_close = _safe_float(fi["previousClose"])
-        except Exception:
-            pass
-    change_pct = None
-    if price is not None and prev_close and prev_close != 0:
-        change_pct = round((price - prev_close) / prev_close * 100, 4)
+    with _session() as client:
+        for delta in range(7):
+            candidate = now_wib - timedelta(days=delta)
+            if candidate.weekday() >= 5:
+                continue
+            date_str = candidate.strftime("%Y%m%d")
+            resp = client.get(
+                f"{BASE}/primary/TradingSummary/GetStockSummary",
+                params={"date": date_str},
+            )
+            data = resp.json()
+            if data.get("recordsTotal", 0) > 0:
+                logger.info("Loaded stock snapshots for %s (%d stocks)", date_str, data["recordsTotal"])
+                break
 
-    # --- Intraday bars (v8/finance/chart — not rate-limited) ---
-    intraday = yf_ticker.history(period="1d", interval="5m")
-    bars = []
-    if not intraday.empty:
-        for ts, row in intraday.iterrows():
-            bars.append({
-                "datetime": ts.strftime("%Y-%m-%dT%H:%M:%S"),
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": int(row["Volume"]),
-            })
-        # Fallback price from last bar if fast_info didn't give us one
-        if price is None and bars:
-            price = bars[-1]["close"]
+    result: dict[str, dict] = {}
+    for row in data.get("data", []):
+        ticker = (row.get("StockCode") or "").strip()
+        if not ticker:
+            continue
+        close = _safe_float(row.get("Close"))
+        prev = _safe_float(row.get("Previous"))
+        change_pct = None
+        if close is not None and prev and prev != 0:
+            change_pct = round((close - prev) / prev * 100, 4)
+        listed_shares = _safe_float(row.get("ListedShares"))
+        market_cap = round(close * listed_shares) if close and listed_shares else None
+        result[ticker] = {
+            "price": close,
+            "change_pct": change_pct,
+            "open": _safe_float(row.get("OpenPrice")),
+            "high": _safe_float(row.get("High")),
+            "low": _safe_float(row.get("Low")),
+            "close": close,
+            "volume": int(row.get("Volume") or 0),
+            "name": (row.get("StockName") or "").strip() or ticker,
+            "market_cap": market_cap,
+        }
+    return result
 
-    # --- Daily closes for technicals (v8/finance/chart — not rate-limited) ---
-    daily = yf_ticker.history(period="90d", interval="1d")
-    closes = []
-    if not daily.empty:
-        closes = [float(c) for c in daily["Close"].tolist()]
-    elif bars:
-        closes = [b["close"] for b in bars]
 
-    # --- Fundamentals via .info (quoteSummary — rate-limited, graceful fallback) ---
-    name, sector = ticker, "Unknown"
-    pe = pbv = roe = eps = market_cap = div_yield = None
-    try:
-        info = yf_ticker.info or {}
-        name = info.get("longName") or info.get("shortName") or ticker
-        sector = info.get("sector") or "Unknown"
-        pe = _safe_float(info.get("trailingPE"))
-        pbv = _safe_float(info.get("priceToBook"))
-        roe = _safe_float(info.get("returnOnEquity"))
-        eps = _safe_float(info.get("trailingEps"))
-        market_cap = _safe_float(info.get("marketCap"))
-        div_yield = _safe_float(info.get("dividendYield"))
-        # Also get price from info if fast_info failed
-        if price is None:
-            price = _safe_float(info.get("currentPrice"))
-        if prev_close is None:
-            prev_close = _safe_float(info.get("previousClose"))
-            if price is not None and prev_close and prev_close != 0:
-                change_pct = round((price - prev_close) / prev_close * 100, 4)
-    except Exception as e:
-        logger.warning("Fundamentals fetch failed for %s (will use None): %s", ticker, e)
+def fetch_stock_history_closes(ticker: str, length: int = 100) -> list[float]:
+    """
+    Fetch historical daily closes for a ticker (used for technical indicators).
+    Returns list in ascending order (oldest first).
+    """
+    with _session() as client:
+        resp = client.get(
+            f"{BASE}/primary/ListedCompany/GetTradingInfoSS",
+            params={"code": ticker, "start": 0, "length": length},
+        )
+        data = resp.json()
+    replies = data.get("replies", [])
+    closes = [
+        _safe_float(r.get("Close"))
+        for r in replies
+        if _safe_float(r.get("Close")) is not None
+    ]
+    return list(reversed(closes))  # API returns newest-first; reverse to oldest-first
 
-    return {
-        "ticker": ticker,
-        "name": name,
-        "sector": sector,
-        "price": price,
-        "change_pct": change_pct,
-        "pe": pe,
-        "pbv": pbv,
-        "roe": roe,
-        "eps": eps,
-        "market_cap": market_cap,
-        "div_yield": div_yield,
-        "bars": bars,
-        "closes": closes,
-        "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-    }
+
+def fetch_all_fundamentals() -> dict[str, dict]:
+    """
+    Fetch financial ratios (PE, PBV, ROE, EPS, sector) for ALL IDX stocks in one call.
+    Tries current month then walks back up to 3 months to find populated data.
+    Returns dict[ticker → {pe, pbv, roe, eps, div_yield, sector}]
+    Note: roe is returned as decimal (0.204 not 20.4%).
+    """
+    now_wib = datetime.now(WIB)
+    data: dict = {"data": []}
+
+    with _session() as client:
+        for delta_months in range(4):
+            month = now_wib.month - delta_months
+            year = now_wib.year
+            while month <= 0:
+                month += 12
+                year -= 1
+            resp = client.get(
+                f"{BASE}/primary/DigitalStatistic/GetApiDataPaginated",
+                params={
+                    "urlName": "LINK_FINANCIAL_DATA_RATIO",
+                    "periodYear": year,
+                    "periodMonth": month,
+                    "periodType": "monthly",
+                    "isPrint": "False",
+                    "cumulative": "false",
+                    "pageSize": 9999,
+                    "pageNumber": 1,
+                },
+            )
+            data = resp.json()
+            if data.get("data"):
+                logger.info("Loaded fundamentals for %d-%02d (%d stocks)", year, month, len(data["data"]))
+                break
+
+    result: dict[str, dict] = {}
+    for row in data.get("data", []):
+        ticker = (row.get("code") or "").strip()
+        if not ticker:
+            continue
+        roe_pct = _safe_float(row.get("roe"))
+        result[ticker] = {
+            "pe": _safe_float(row.get("per")),
+            "pbv": _safe_float(row.get("priceBV")),
+            "roe": round(roe_pct / 100, 6) if roe_pct is not None else None,
+            "eps": _safe_float(row.get("eps")),
+            "div_yield": None,  # not available in IDX financial ratios endpoint
+            "sector": (row.get("sector") or "Unknown").strip(),
+        }
+    return result
 
 
 def fetch_ihsg() -> dict:
-    """Fetch IHSG (^JKSE) latest price and today's intraday history."""
-    yf_ticker = yf.Ticker("^JKSE")
+    """
+    Fetch IHSG (Composite) current price and today's intraday chart data.
+    Returns {price, change_pct, bars, fetched_at}.
+    """
+    with _session() as client:
+        resp = client.get(
+            f"{BASE}/primary/helper/GetIndexChart",
+            params={"indexCode": "COMPOSITE", "period": "1D"},
+        )
+        data = resp.json()
 
-    # Use history for price — less rate-limited than .info
-    hist = yf_ticker.history(period="1d", interval="5m")
+    chart_data = data.get("ChartData") or []
     bars = []
-    price = None
-    if not hist.empty:
-        for ts, row in hist.iterrows():
+    for point in chart_data:
+        ts_ms = point.get("Date")
+        close = _safe_float(point.get("Close"))
+        if ts_ms and close:
+            dt = datetime.fromtimestamp(ts_ms / 1000, tz=WIB)
             bars.append({
-                "datetime": ts.strftime("%Y-%m-%dT%H:%M:%S"),
-                "close": float(row["Close"]),
+                "datetime": dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                "close": close,
             })
-        price = bars[-1]["close"] if bars else None
 
-    # Try .info for prev_close to compute change_pct
+    price = bars[-1]["close"] if bars else None
+
+    # Compute day change: fetch 1W chart to get previous day's close
     change_pct = None
     try:
-        info = yf_ticker.info or {}
-        if price is None:
-            price = _safe_float(info.get("currentPrice")) or _safe_float(info.get("regularMarketPrice"))
-        prev_close = _safe_float(info.get("previousClose"))
-        if price is not None and prev_close and prev_close != 0:
-            change_pct = round((price - prev_close) / prev_close * 100, 4)
+        with _session() as client:
+            resp_w = client.get(
+                f"{BASE}/primary/helper/GetIndexChart",
+                params={"indexCode": "COMPOSITE", "period": "1W"},
+            )
+            week_data = resp_w.json()
+        week_chart = week_data.get("ChartData") or []
+        if week_chart and len(week_chart) >= 2 and price is not None:
+            # Find yesterday's last close: all bars not from today
+            today_date = datetime.now(WIB).date()
+            prev_closes = [
+                p["Close"] for p in week_chart
+                if datetime.fromtimestamp(p["Date"] / 1000, tz=WIB).date() < today_date
+            ]
+            if prev_closes:
+                prev_close = prev_closes[-1]
+                if prev_close and prev_close != 0:
+                    change_pct = round((price - prev_close) / prev_close * 100, 4)
     except Exception as e:
-        logger.warning("IHSG .info failed (change_pct will be None): %s", e)
+        logger.warning("IHSG change_pct calculation failed: %s", e)
 
     return {
         "price": price,
         "change_pct": change_pct,
         "bars": bars,
-        "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "fetched_at": datetime.now(WIB).strftime("%Y-%m-%dT%H:%M:%S"),
     }
