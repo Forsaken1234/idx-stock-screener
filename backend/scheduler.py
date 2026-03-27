@@ -106,6 +106,13 @@ def _cold_start_fetch():
                 )
             except Exception as e:
                 logger.error("Cold start fetch failed for %s: %s", ticker, e)
+        # Also fetch IHSG so the Dashboard has data from first boot
+        try:
+            ihsg = fetch_ihsg()
+            for bar in ihsg["bars"]:
+                db.append_ihsg_history(conn, datetime=bar["datetime"], close=bar["close"])
+        except Exception as e:
+            logger.error("Cold start IHSG fetch failed: %s", e)
     finally:
         conn.close()
 

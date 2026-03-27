@@ -30,4 +30,5 @@ def test_db(tmp_path, monkeypatch):
 def client(test_db):
     from main import app
     from fastapi.testclient import TestClient
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
