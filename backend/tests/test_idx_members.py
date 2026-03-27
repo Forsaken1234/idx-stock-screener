@@ -13,7 +13,7 @@ def test_fallback_idx30_has_expected_tickers():
     assert len(tickers["IDX30"]) >= 25
 
 def test_all_tickers_deduped():
-    all_tickers = get_all_tickers()
+    all_tickers = get_all_tickers(use_scrape=False)
     # no duplicates
     assert len(all_tickers) == len(set(all_tickers))
     # each is a plain ticker (no .JK suffix)

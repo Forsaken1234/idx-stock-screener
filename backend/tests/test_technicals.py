@@ -16,8 +16,8 @@ def test_returns_all_keys():
 def test_rsi_in_valid_range():
     closes = _make_prices(60)
     result = compute_technicals(closes)
-    if result["rsi"] is not None:
-        assert 0 <= result["rsi"] <= 100
+    assert result["rsi"] is not None, "RSI should be computable with 60 data points"
+    assert 0 <= result["rsi"] <= 100
 
 def test_ma20_is_average_of_last_20():
     closes = _make_prices(60)
