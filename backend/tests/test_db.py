@@ -66,11 +66,32 @@ def test_snapshot_unique_constraint(conn):
 def test_append_price_history(conn):
     from db import upsert_stock, append_price_history, get_price_history
     upsert_stock(conn, ticker="BBCA", name="Bank Central Asia", sector="Finance")
+    # Insert 3 bars in chronological order
     append_price_history(conn, ticker="BBCA", datetime="2026-03-27T09:00:00",
                          open=9100, high=9250, low=9080, close=9200, volume=4200000)
+    append_price_history(conn, ticker="BBCA", datetime="2026-03-27T09:05:00",
+                         open=9200, high=9300, low=9190, close=9250, volume=3800000)
+    append_price_history(conn, ticker="BBCA", datetime="2026-03-27T09:10:00",
+                         open=9250, high=9350, low=9240, close=9300, volume=4100000)
     history = get_price_history(conn, "BBCA")
-    assert len(history) == 1
-    assert history[0]["close"] == 9200
+    assert len(history) == 3
+    # Result should be sorted ascending (oldest first for chart display)
+    assert history[0]["datetime"] == "2026-03-27T09:00:00"
+    assert history[-1]["datetime"] == "2026-03-27T09:10:00"
+    assert history[-1]["close"] == 9300
+
+def test_price_history_limit_returns_most_recent(conn):
+    from db import upsert_stock, append_price_history, get_price_history
+    upsert_stock(conn, ticker="BBCA", name="Bank Central Asia", sector="Finance")
+    for i in range(5):
+        append_price_history(conn, ticker="BBCA", datetime=f"2026-03-27T09:0{i}:00",
+                             open=9100+i*10, high=9200+i*10, low=9090+i*10,
+                             close=9150+i*10, volume=1000000)
+    # limit=3 should return the 3 most recent, sorted ascending
+    history = get_price_history(conn, "BBCA", limit=3)
+    assert len(history) == 3
+    assert history[0]["datetime"] == "2026-03-27T09:02:00"  # 3rd oldest = 1st of most recent 3
+    assert history[-1]["datetime"] == "2026-03-27T09:04:00"  # most recent
 
 def test_price_history_unique_constraint(conn):
     from db import upsert_stock, append_price_history

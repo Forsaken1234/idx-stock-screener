@@ -160,7 +160,9 @@ def append_price_history(conn, *, ticker, datetime, open, high, low, close, volu
 
 def get_price_history(conn, ticker: str, limit: int = 200) -> list[dict]:
     rows = conn.execute(
-        "SELECT * FROM price_history WHERE ticker=? ORDER BY datetime ASC LIMIT ?",
+        """SELECT * FROM (
+               SELECT * FROM price_history WHERE ticker=? ORDER BY datetime DESC LIMIT ?
+           ) ORDER BY datetime ASC""",
         (ticker, limit),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -208,7 +210,6 @@ def get_watchlist(conn) -> list[str]:
 
 
 def get_most_recent_fetch_time(conn) -> str | None:
-    row = conn.execute(
-        "SELECT MAX(fetched_at) AS t FROM snapshots"
-    ).fetchone()
-    return row["t"] if row else None
+    # MAX() always returns one row; row["t"] is None when table is empty
+    row = conn.execute("SELECT MAX(fetched_at) AS t FROM snapshots").fetchone()
+    return row["t"]
