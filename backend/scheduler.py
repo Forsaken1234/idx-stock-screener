@@ -134,6 +134,7 @@ def setup_scheduler(app):
     conn = db.get_connection()
     db.create_schema(conn)
     stocks = db.get_all_active_stocks(conn)
+    has_snapshots = bool(db.get_most_recent_fetch_time(conn))
     conn.close()
 
     if not stocks:
@@ -142,6 +143,9 @@ def setup_scheduler(app):
         seed_stocks_table(conn, use_scrape=True)
         conn.close()
         logger.info("Cold start: triggering immediate fetch for all tickers")
+        _cold_start_fetch()
+    elif not has_snapshots:
+        logger.info("Tickers seeded but no snapshots yet — triggering cold start fetch")
         _cold_start_fetch()
     elif is_market_open():
         logger.info("Market is open on startup — triggering immediate fetch")
