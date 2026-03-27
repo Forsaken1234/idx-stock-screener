@@ -22,9 +22,10 @@ def is_market_open() -> bool:
     return market_open <= now_wib <= market_close
 
 
-def run_fetch_cycle():
-    """Main scheduler job: fetch all active tickers, compute technicals, store to DB."""
-    if not is_market_open():
+def run_fetch_cycle(force: bool = False):
+    """Main scheduler job: fetch all active tickers, compute technicals, store to DB.
+    Pass force=True to bypass the market-hours check (used on startup)."""
+    if not force and not is_market_open():
         logger.info("Market closed, skipping fetch cycle")
         return
 
@@ -147,9 +148,9 @@ def setup_scheduler(app):
     elif not has_snapshots:
         logger.info("Tickers seeded but no snapshots yet — triggering cold start fetch")
         _cold_start_fetch()
-    elif is_market_open():
-        logger.info("Market is open on startup — triggering immediate fetch")
-        run_fetch_cycle()
+    else:
+        logger.info("Startup fetch — refreshing latest data (market %s)", "open" if is_market_open() else "closed")
+        run_fetch_cycle(force=True)
 
     scheduler = BackgroundScheduler(timezone=WIB)
     scheduler.add_job(
